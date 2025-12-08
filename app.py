@@ -208,9 +208,13 @@ def main():
 
     col1, col2 = st.columns(2)
     with col1:
-        origin_input = st.text_input("📍 起點 (地址或 lat,lng)", "陽明交通大學第二餐廳")
+        origin_input = st.text_input("📍 起點 (地址或 lat,lng)", "國立陽明交通大學第二餐廳")
     with col2:
         dest_input = st.text_input("🏁 終點 (地址或 lat,lng)", "新竹火車站")
+
+    # --- [新增] 勾選框 ---
+    # value=True 代表預設是勾選的，如果您希望預設不勾選，改成 value=False
+    use_gemini = st.checkbox("使用 Gemini 分析路線", value=True)
 
     if st.button("🚀 開始規劃", type="primary"):
         with st.spinner("正在搜尋最佳站點並計算路徑..."):
@@ -227,7 +231,7 @@ def main():
                 # 顯示結果區塊
                 st.success("✅ 計算完成！")
                 
-                # 地圖可視化 (簡單版，顯示四個點)
+                # 地圖可視化 (記得用剛剛修好的有顏色的版本)
                 map_data = [
                     {"lat": summary['origin_coords'][0], "lon": summary['origin_coords'][1], "color": "#FF0000"},
                     {"lat": summary['ubike_start']['lat'], "lon": summary['ubike_start']['lng'], "color": "#00FF00"},
@@ -263,11 +267,16 @@ def main():
 
                 st.divider()
 
-                # Gemini 分析
-                st.subheader("🤖 Gemini 路線分析與建議")
-                with st.spinner("Gemini 正在撰寫分析報告..."):
-                    gemini_resp = call_gemini(summary)
-                    st.markdown(gemini_resp)
+                # --- [修改] Gemini 分析區塊 ---
+                # 只有當 use_gemini 被勾選時，才執行這段
+                if use_gemini:
+                    st.subheader("🤖 Gemini 路線分析與建議")
+                    with st.spinner("Gemini 正在撰寫分析報告..."):
+                        gemini_resp = call_gemini(summary)
+                        st.markdown(gemini_resp)
+                else:
+                    # 如果沒勾選，可以顯示一個小提示
+                    st.info("💡 您未勾選 AI 助理，已跳過路線分析。")
 
             except Exception as e:
                 st.error(f"發生錯誤: {str(e)}")
