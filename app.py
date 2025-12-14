@@ -202,7 +202,7 @@ def input_latlng(s):
 @st.cache_data(ttl=600)
 def scrape_weather_final():
     try:
-        url = "https://wttr.in/Hsinchu?format=%t|%C"
+        url = "https://wttr.in/Hsinchu?m&format=%t|%C"
         
         resp = requests.get(url, timeout=3)
         
