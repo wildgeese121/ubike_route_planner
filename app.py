@@ -4,21 +4,19 @@ import json
 import math
 import requests
 import urllib.parse
+import re
 from typing import Dict, List, Tuple
 import google.generativeai as genai
 
-# --- 設定頁面 ---
 st.set_page_config(page_title="新竹 Ubike 路線規劃助手", page_icon="🚲", layout="centered")
 
-# --- API KEYS (建議使用 st.secrets 管理，這裡為了方便 demo 先保留變數) ---
-GOOGLE_MAPS_API_KEY = st.secrets["GOOGLE_MAPS_API_KEY"] # 請注意資安，不要上傳到公開 GitHub
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]     # 請注意資安
+GOOGLE_MAPS_API_KEY = st.secrets["GOOGLE_MAPS_API_KEY"] 
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]    
 
 UBIKE_JSON = "HsinChu_Ubike.json"
 DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
 DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 
-# --- 核心邏輯函數 (保持不變，加上快取裝飾器) ---
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
@@ -29,7 +27,7 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return 2 * R * math.asin(math.sqrt(a))
 
-@st.cache_data # 使用 Streamlit 快取，避免每次操作都重讀檔案
+@st.cache_data
 def load_ubike_data(path=UBIKE_JSON) -> List[Dict]:
     if not os.path.exists(path):
         st.error(f"找不到檔案：{path}，請確認檔案位置。")
@@ -59,6 +57,7 @@ def find_nearest_ubike(user_lat: float, user_lng: float, ubike_list: List[Dict],
     distances.sort(key=lambda x: x[0])
     return [u[1] for u in distances[:top_k]]
 
+# Google Maps API
 def google_distance_matrix(origins: List[str], destinations: List[str], mode: str="walking") -> Dict:
     params = {
         "origins": "|".join(origins),
@@ -89,6 +88,7 @@ def generate_maps_link(origin: str, destination: str, mode: str) -> str:
     safe_dest = urllib.parse.quote(destination)
     return f"{base_url}&origin={safe_origin}&destination={safe_dest}&travelmode={mode}"
 
+#Google Gemini API
 def call_gemini(summary):
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel("gemini-2.5-flash")
@@ -180,14 +180,17 @@ def plan_route(user_origin: Tuple[float,float], user_destination: Tuple[float,fl
 def input_latlng(s):
     if not s:
         return None
-    if "," in s:
+    
+    pattern = r"^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$"
+    match = re.match(pattern, s.strip())
+
+    if match:
         try:
-            lat, lng = s.split(",", 1)
-            return float(lat.strip()), float(lng.strip())
-        except:
+            return float(match.group(1)), float(match.group(3))
+        except ValueError:
             pass
     
-    # 地址 geocoding
+    # Google Geocoding
     try:
         geocode_resp = google_directions(s, s, mode="walking")
         loc = geocode_resp["routes"][0]["legs"][0]["start_location"]
@@ -195,11 +198,37 @@ def input_latlng(s):
     except Exception:
         return None
 
-# --- Streamlit 介面邏輯 ---
 
+@st.cache_data(ttl=600)
+def scrape_weather_final():
+    try:
+        url = "https://wttr.in/Hsinchu?format=%t|%C"
+        
+        resp = requests.get(url, timeout=3)
+        
+        if resp.status_code == 200:
+            data = resp.text.strip().split("|")
+            if len(data) == 2:
+                return data[0], data[1]
+        
+        return "N/A", "N/A"
+    except Exception as e:
+        print(f"Scraping failed: {e}")
+        return "N/A", "N/A"
+
+
+# UI(made by AI)
 def main():
     st.title("🚲 新竹 Ubike 智慧導航")
-    st.markdown("結合 **Google Maps API** 與 **Gemini AI**，幫你分析「Ubike」vs「公車」的最佳方案。")
+    
+    with st.sidebar:
+        st.header("🌤️ 新竹即時天氣")
+        
+        temp, condition = scrape_weather_final()
+        
+        st.info(f"🌡️ **{temp}** |  ☁️ **{condition}**")
+            
+        st.caption("資料來源：wttr.in")
 
     # 載入資料
     ubike_list = load_ubike_data()
@@ -212,9 +241,7 @@ def main():
     with col2:
         dest_input = st.text_input("🏁 終點 (地址或 lat,lng)", "新竹火車站")
 
-    # --- [新增] 勾選框 ---
-    # value=True 代表預設是勾選的，如果您希望預設不勾選，改成 value=False
-    use_gemini = st.checkbox("使用 Gemini 分析路線", value=True)
+    use_gemini = st.checkbox("使用 Gemini 分析路線", value=False)
 
     if st.button("🚀 開始規劃", type="primary"):
         with st.spinner("正在搜尋最佳站點並計算路徑..."):
@@ -224,14 +251,11 @@ def main():
             if not origin or not destination:
                 st.error("❌ 無法解析地址，請嘗試輸入更完整的地址或經緯度。")
                 return
-
             try:
                 summary = plan_route(origin, destination, ubike_list)
                 
-                # 顯示結果區塊
                 st.success("✅ 計算完成！")
                 
-                # 地圖可視化 (記得用剛剛修好的有顏色的版本)
                 map_data = [
                     {"lat": summary['origin_coords'][0], "lon": summary['origin_coords'][1], "color": "#FF0000"},
                     {"lat": summary['ubike_start']['lat'], "lon": summary['ubike_start']['lng'], "color": "#00FF00"},
@@ -240,7 +264,6 @@ def main():
                 ]
                 st.map(data=map_data, latitude="lat", longitude="lon", color="color", size=20, zoom=13)
 
-                # 詳細步驟
                 st.subheader("📋 路線詳情")
                 c1, c2, c3 = st.columns(3)
                 
@@ -267,15 +290,12 @@ def main():
 
                 st.divider()
 
-                # --- [修改] Gemini 分析區塊 ---
-                # 只有當 use_gemini 被勾選時，才執行這段
                 if use_gemini:
                     st.subheader("🤖 Gemini 路線分析與建議")
                     with st.spinner("Gemini 正在撰寫分析報告..."):
                         gemini_resp = call_gemini(summary)
                         st.markdown(gemini_resp)
                 else:
-                    # 如果沒勾選，可以顯示一個小提示
                     st.info("💡 您未勾選 AI 助理，已跳過路線分析。")
 
             except Exception as e:
