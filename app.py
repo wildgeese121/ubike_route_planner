@@ -146,6 +146,7 @@ def plan_route(user_origin: Tuple[float,float], user_destination: Tuple[float,fl
     link_walk_to_station = generate_maps_link(ori_str, start_str, "walking")
     link_bike_ride = generate_maps_link(start_str, end_str, "bicycling")
     link_walk_to_dest = generate_maps_link(end_str, dest_str, "walking")
+    link_transit = generate_maps_link(ori_str, dest_str, "transit")
 
     walk_to_ubike = parse_dm(dm1)
     bike_leg = parse_dm(dm2)
@@ -172,7 +173,8 @@ def plan_route(user_origin: Tuple[float,float], user_destination: Tuple[float,fl
         "links": {
             "walk1": link_walk_to_station,
             "bike": link_bike_ride,
-            "walk2": link_walk_to_dest
+            "walk2": link_walk_to_dest,
+            "transit": link_transit
         }
     }
     return summary
@@ -217,18 +219,8 @@ def scrape_weather_final():
         return "N/A", "N/A"
 
 
-# UI(made by AI)
 def main():
     st.title("🚲 新竹 Ubike 智慧導航")
-    
-    with st.sidebar:
-        st.header("🌤️ 新竹即時天氣")
-        
-        temp, condition = scrape_weather_final()
-        
-        st.info(f"🌡️ **{temp}** |  ☁️ **{condition}**")
-            
-        st.caption("資料來源：wttr.in")
 
     # 載入資料
     ubike_list = load_ubike_data()
@@ -241,8 +233,16 @@ def main():
     with col2:
         dest_input = st.text_input("🏁 終點 (地址或 lat,lng)", "新竹火車站")
 
+    # weather
+    with st.sidebar:
+        st.header("🌤️ 新竹即時天氣")
+        temp, condition = scrape_weather_final()
+        st.info(f"🌡️ **{temp}** |  ☁️ **{condition}**")
+        st.caption("資料來源：wttr.in")
+
     use_gemini = st.checkbox("使用 Gemini 分析路線", value=False)
 
+    # 開始規劃
     if st.button("🚀 開始規劃", type="primary"):
         with st.spinner("正在搜尋最佳站點並計算路徑..."):
             origin = input_latlng(origin_input)
@@ -256,6 +256,7 @@ def main():
                 
                 st.success("✅ 計算完成！")
                 
+                # 顯示地圖
                 map_data = [
                     {"lat": summary['origin_coords'][0], "lon": summary['origin_coords'][1], "color": "#FF0000"},
                     {"lat": summary['ubike_start']['lat'], "lon": summary['ubike_start']['lng'], "color": "#00FF00"},
@@ -264,11 +265,17 @@ def main():
                 ]
                 st.map(data=map_data, latitude="lat", longitude="lon", color="color", size=20, zoom=13)
 
-                st.subheader("📋 路線詳情")
+                st.subheader("📋 Ubike 路線詳情")
                 c1, c2, c3 = st.columns(3)
                 
                 links = summary.get("links", {})
                 
+                # 計算 Ubike 總時間 (步行1 + 騎車 + 步行2)
+                t1 = summary['walk_to_ubike'].get('duration_s', 0)
+                t2 = summary['bike_leg'].get('duration_s', 0)
+                t3 = summary['walk_from_ubike'].get('duration_s', 0)
+                total_ubike_min = int((t1 + t2 + t3) / 60)
+
                 with c1:
                     st.markdown("**1. 步行前往借車**")
                     st.write(f"📍 {summary['ubike_start']['name']}")
@@ -278,7 +285,7 @@ def main():
                 with c2:
                     st.markdown("**2. Ubike 騎乘**")
                     st.write(f"📍 往 {summary['ubike_end']['name']}")
-                    bike_min = int(summary['bike_leg'].get('duration_s', 0)/60)
+                    bike_min = int(t2 / 60)
                     st.write(f"⏱️ 約 {bike_min} 分鐘")
                     st.link_button("騎車導航", links.get('bike'))
 
@@ -287,6 +294,35 @@ def main():
                     st.write("🏁 到達目的地")
                     st.write(f"⏱️ {summary['walk_from_ubike'].get('duration_text','N/A')}")
                     st.link_button("步行導航", links.get('walk2'))
+                
+                st.info(f"🚲 **Ubike 方案總時間：約 {total_ubike_min} 分鐘**")
+                st.divider()
+
+                # 大眾運輸
+                st.subheader("🚌 大眾運輸替代方案")
+                
+                transit_sec = summary['transit_option'].get('duration_s', 0)
+                transit_link = links.get('transit')
+
+                if transit_sec > 0:
+                    transit_min = int(transit_sec / 60)
+                    t_col1, t_col2 = st.columns([3, 1])
+                    
+                    with t_col1:
+                        st.write(f"⏱️ **預估時間：約 {transit_min} 分鐘**")
+                        
+                        diff = transit_min - total_ubike_min
+                        if diff > 0:
+                            st.caption(f"💡 Ubike 方案比大眾運輸快約 {diff} 分鐘")
+                        elif diff < 0:
+                            st.caption(f"💡 大眾運輸比 Ubike 方案快約 {abs(diff)} 分鐘")
+                        else:
+                            st.caption("💡 兩種方式時間差不多")
+
+                    with t_col2:
+                        st.link_button("🚌 大眾運輸導航", transit_link)
+                else:
+                    st.warning("⚠️ 查無大眾運輸路線資料")
 
                 st.divider()
 
