@@ -204,7 +204,7 @@ def scrape_weather_final():
     try:
         url = "https://wttr.in/Hsinchu?m&format=%t|%C"
         
-        resp = requests.get(url, timeout=3)
+        resp = requests.get(url, timeout=10)
         
         if resp.status_code == 200:
             data = resp.text.strip().split("|")
